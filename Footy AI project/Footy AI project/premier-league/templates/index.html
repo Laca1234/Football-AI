@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Footy AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="logo">Footy <span>AI</span></div>
+    <div class="nav-right">
+      <div class="season-badge" id="seasonBadge">Loading...</div>
+      <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">☀️</button>
+    </div>
+  </nav>
+
+  <main>
+
+    <!-- MODE TOGGLE -->
+    <div class="mode-toggle">
+      <button class="mode-btn active" data-mode="match" onclick="setMode('match')">Match Predict</button>
+      <button class="mode-btn" data-mode="season" onclick="setMode('season')">Season Sim</button>
+    </div>
+
+    <!-- ── MATCH PANEL ── -->
+    <div class="panel active" id="matchPanel">
+      <div class="match-layout">
+
+        <!-- Left: match rows + results -->
+        <div>
+          <div class="match-rows" id="matchRows"></div>
+          <button class="add-row-btn" onclick="addMatchRow()">
+            <span class="plus">+</span> Add another match
+          </button>
+          <button class="predict-btn" id="predictBtn" onclick="runPrediction()">Predict</button>
+          <div class="results-section" id="matchResults"></div>
+        </div>
+
+        <!-- Right: next 2 gameweeks -->
+        <div class="sidebar">
+          <div class="sidebar-card">
+            <div class="sidebar-header">Next 2 Gameweeks</div>
+            <div id="fixturesSidebar">
+              <div class="loading" style="padding:20px">
+                <div class="spinner"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ── SEASON PANEL ── -->
+    <div class="panel" id="seasonPanel">
+      <button class="sim-btn" id="simBtn" onclick="runSimulation()">Simulate Season</button>
+      <div class="season-layout">
+
+        <!-- Left: standings table -->
+        <div id="seasonResults"></div>
+
+        <!-- Right: insight cards -->
+        <div id="seasonInsights"></div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
