@@ -216,70 +216,104 @@ def _build_features(data: pd.DataFrame):
     team_history = defaultdict(list)
     feature_rows = []
 
-    for _, row in data.iterrows():
-        ht, at   = row["HomeTeam"], row["AwayTeam"]
-        season   = row["season"]
+    # Ensure chronological order and group matches by calendar day
+    data = data.copy()
+    data["_feature_date"] = pd.to_datetime(data["date"]).dt.normalize()
+    data = data.sort_values("_feature_date")
 
-        h_hist = team_history[ht]
-        a_hist = team_history[at]
+    for date, day_matches in data.groupby("_feature_date", sort=True):
 
-        # Short-term overall form (last 5)
-        hf5  = _team_stats(h_hist, FORM_WINDOW)
-        af5  = _team_stats(a_hist, FORM_WINDOW)
+        # Collect results, but do not add them to history yet
+        daily_updates = []
 
-        # Short-term venue-specific form (last 5 home / last 5 away)
-        h_home_hist = [h for h in h_hist if h["is_home"]]
-        a_away_hist = [h for h in a_hist if not h["is_home"]]
-        hf5v = _team_stats(h_home_hist, FORM_WINDOW)
-        af5v = _team_stats(a_away_hist, FORM_WINDOW)
+        # STEP 1: Generate features for every match on this day
+        for _, row in day_matches.iterrows():
+            ht, at = row["HomeTeam"], row["AwayTeam"]
+            season = row["season"]
 
-        # Long-term quality (last 38 — ~1 full season)
-        hf38 = _team_stats(h_hist, LONG_WINDOW)
-        af38 = _team_stats(a_hist, LONG_WINDOW)
+            h_hist = team_history[ht]
+            a_hist = team_history[at]
 
-        # Season-to-date
-        h_szn = [h for h in h_hist if h["season"] == season]
-        a_szn = [h for h in a_hist if h["season"] == season]
-        h_szn_gf = float(np.mean([h["gf"] for h in h_szn])) if h_szn else 1.2
-        h_szn_ga = float(np.mean([h["ga"] for h in h_szn])) if h_szn else 1.0
-        a_szn_gf = float(np.mean([h["gf"] for h in a_szn])) if a_szn else 1.2
-        a_szn_ga = float(np.mean([h["ga"] for h in a_szn])) if a_szn else 1.0
+            # Short-term overall form
+            hf5 = _team_stats(h_hist, FORM_WINDOW)
+            af5 = _team_stats(a_hist, FORM_WINDOW)
 
-        feature_rows.append({
-            # short-term overall
-            "h_w5": hf5["w"],   "h_d5": hf5["d"],   "h_l5": hf5["l"],
-            "h_gf5": hf5["avg_gf"], "h_ga5": hf5["avg_ga"],
-            "a_w5": af5["w"],   "a_d5": af5["d"],   "a_l5": af5["l"],
-            "a_gf5": af5["avg_gf"], "a_ga5": af5["avg_ga"],
-            # short-term venue-specific
-            "h_home_w5": hf5v["w"],  "h_home_d5": hf5v["d"],  "h_home_l5": hf5v["l"],
-            "h_home_gf5": hf5v["avg_gf"], "h_home_ga5": hf5v["avg_ga"],
-            "a_away_w5": af5v["w"],  "a_away_d5": af5v["d"],  "a_away_l5": af5v["l"],
-            "a_away_gf5": af5v["avg_gf"], "a_away_ga5": af5v["avg_ga"],
-            # long-term quality
-            "h_wr38": hf38["wr"],  "h_gf38": hf38["avg_gf"], "h_ga38": hf38["avg_ga"],
-            "a_wr38": af38["wr"],  "a_gf38": af38["avg_gf"], "a_ga38": af38["avg_ga"],
-            # season-to-date
-            "h_season_gf": h_szn_gf, "h_season_ga": h_szn_ga,
-            "a_season_gf": a_szn_gf, "a_season_ga": a_szn_ga,
-            # target + weight
-            "FTR":    row["FTR"],
-            "weight": row["weight"],
-        })
+            # Venue-specific form
+            h_home_hist = [h for h in h_hist if h["is_home"]]
+            a_away_hist = [h for h in a_hist if not h["is_home"]]
 
-        # Update AFTER extracting features (no leakage)
-        team_history[ht].append(dict(
-            is_home=True,  gf=row["FTHG"], ga=row["FTAG"],
-            win=(row["FTR"] == "H"), draw=(row["FTR"] == "D"),
-            season=season, date=row["date"],
-        ))
-        team_history[at].append(dict(
-            is_home=False, gf=row["FTAG"], ga=row["FTHG"],
-            win=(row["FTR"] == "A"), draw=(row["FTR"] == "D"),
-            season=season, date=row["date"],
-        ))
+            hf5v = _team_stats(h_home_hist, FORM_WINDOW)
+            af5v = _team_stats(a_away_hist, FORM_WINDOW)
+
+            # Long-term quality
+            hf38 = _team_stats(h_hist, LONG_WINDOW)
+            af38 = _team_stats(a_hist, LONG_WINDOW)
+
+            # Season-to-date statistics
+            h_szn = [h for h in h_hist if h["season"] == season]
+            a_szn = [h for h in a_hist if h["season"] == season]
+
+            h_szn_gf = float(np.mean([h["gf"] for h in h_szn])) if h_szn else 1.2
+            h_szn_ga = float(np.mean([h["ga"] for h in h_szn])) if h_szn else 1.0
+            a_szn_gf = float(np.mean([h["gf"] for h in a_szn])) if a_szn else 1.2
+            a_szn_ga = float(np.mean([h["ga"] for h in a_szn])) if a_szn else 1.0
+
+            feature_rows.append({
+                "h_w5": hf5["w"], "h_d5": hf5["d"], "h_l5": hf5["l"],
+                "h_gf5": hf5["avg_gf"], "h_ga5": hf5["avg_ga"],
+                "a_w5": af5["w"], "a_d5": af5["d"], "a_l5": af5["l"],
+                "a_gf5": af5["avg_gf"], "a_ga5": af5["avg_ga"],
+
+                "h_home_w5": hf5v["w"], "h_home_d5": hf5v["d"],
+                "h_home_l5": hf5v["l"],
+                "h_home_gf5": hf5v["avg_gf"],
+                "h_home_ga5": hf5v["avg_ga"],
+
+                "a_away_w5": af5v["w"], "a_away_d5": af5v["d"],
+                "a_away_l5": af5v["l"],
+                "a_away_gf5": af5v["avg_gf"],
+                "a_away_ga5": af5v["avg_ga"],
+
+                "h_wr38": hf38["wr"], "h_gf38": hf38["avg_gf"],
+                "h_ga38": hf38["avg_ga"],
+                "a_wr38": af38["wr"], "a_gf38": af38["avg_gf"],
+                "a_ga38": af38["avg_ga"],
+
+                "h_season_gf": h_szn_gf, "h_season_ga": h_szn_ga,
+                "a_season_gf": a_szn_gf, "a_season_ga": a_szn_ga,
+
+                "FTR": row["FTR"],
+                "weight": row["weight"],
+            })
+
+            daily_updates.append(row)
+
+        # STEP 2: Update history only after all daily features exist
+        for row in daily_updates:
+            ht, at = row["HomeTeam"], row["AwayTeam"]
+
+            team_history[ht].append(dict(
+                is_home=True,
+                gf=row["FTHG"],
+                ga=row["FTAG"],
+                win=(row["FTR"] == "H"),
+                draw=(row["FTR"] == "D"),
+                season=row["season"],
+                date=row["date"],
+            ))
+
+            team_history[at].append(dict(
+                is_home=False,
+                gf=row["FTAG"],
+                ga=row["FTHG"],
+                win=(row["FTR"] == "A"),
+                draw=(row["FTR"] == "D"),
+                season=row["season"],
+                date=row["date"],
+            ))
 
     return pd.DataFrame(feature_rows), team_history
+
 
 
 FEATURE_COLS = [
@@ -372,44 +406,83 @@ def evaluate_chronological_model(all_data):
     X_test, y_test = [], []
     eval_history = {k: list(v) for k, v in team_hist.items()}
 
-    for match in test_records:
-        home = match.get("HomeTeam")
-        away = match.get("AwayTeam")
-        ftr = match.get("FTR")
-        season = match.get("season")
+    X_test, y_test = [], []
+    eval_history = {k: list(v) for k, v in team_hist.items()}
 
-        if not home or not away or not ftr:
-            continue
+    #Group test matches by date
+    test_df = pd.DataFrame(test_records)
+    test_df["eval_date"] = pd.to_datetime(test_df["date"])
 
-        from service import _get_features
-        features_df = _get_features(home, away, eval_history, season)
-        
-        if features_df.empty:
-            continue
+    for date, day_matches in test_df.groupby("eval_date", sort=True):
 
-        X_test.append(features_df.iloc[0].values)
-        y_test.append(ftr)
+        # FIRST: Generate features for every match of this day.
+        # No result from this day has been added to history yet.
+        daily_updates = []
 
-        # Sequentially update history to prevent data leakage
-        is_home_win = (ftr == "H")
-        is_draw = (ftr == "D")
-        hg = match.get("FTHG", 0)
-        ag = match.get("FTAG", 0)
-        
-        if home in eval_history:
-            eval_history[home].append(dict(is_home=True, gf=hg, ga=ag, win=is_home_win, draw=is_draw, season=season, date=match.get("date", "sim")))
-        if away in eval_history:
-            eval_history[away].append(dict(is_home=False, gf=ag, ga=hg, win=(ftr == "A"), draw=is_draw, season=season, date=match.get("date", "sim")))
+        for _, match in day_matches.iterrows():
+            home = match.get("HomeTeam")
+            away = match.get("AwayTeam")
+            ftr = match.get("FTR")
+            season = match.get("season")
+
+            if not home or not away or not ftr:
+                continue
+
+            from service import _get_features
+
+            features_df = _get_features(
+                home, away, eval_history, season
+            )
+
+            if features_df.empty:
+                continue
+
+            X_test.append(features_df.iloc[0].values)
+            y_test.append(ftr)
+
+            # Store results for later history updates
+            daily_updates.append(match)
+
+        # SECOND: Update team histories only after all daily
+        # match features have been generated.
+        for match in daily_updates:
+            home = match["HomeTeam"]
+            away = match["AwayTeam"]
+            ftr = match["FTR"]
+            season = match["season"]
+
+            hg = match.get("FTHG", 0)
+            ag = match.get("FTAG", 0)
+
+            eval_history.setdefault(home, []).append(dict(
+                is_home=True,
+                gf=hg,
+                ga=ag,
+                win=(ftr == "H"),
+                draw=(ftr == "D"),
+                season=season,
+                date=match["date"]
+            ))
+
+            eval_history.setdefault(away, []).append(dict(
+                is_home=False,
+                gf=ag,
+                ga=hg,
+                win=(ftr == "A"),
+                draw=(ftr == "D"),
+                season=season,
+                date=match["date"]
+            ))
 
     if not X_test:
         print("No valid test samples constructed.")
         return
 
-    X_test_arr = np.array(X_test)
+    X_test_df = pd.DataFrame(X_test, columns=feat_cols)
     y_test_arr = target_enc.transform(y_test)
 
-    preds = rf.predict(X_test_arr)
-    probas = rf.predict_proba(X_test_arr)
+    preds = rf.predict(X_test_df)
+    probas = rf.predict_proba(X_test_df)
 
     acc = accuracy_score(y_test_arr, preds)
     loss = log_loss(y_test_arr, probas)
@@ -424,4 +497,4 @@ def evaluate_chronological_model(all_data):
     print(f"Test Log Loss: {loss:.4f}")
     print(f"Multiclass Brier Score: {brier_score:.4f}")
     print("\nClassification Report:")
-    print(classification_report(y_test_arr, preds, target_names=target_enc.classes_))
+    print(classification_report(y_test_arr, preds, target_names=target_enc.classes_, zero_division=0))
