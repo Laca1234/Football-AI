@@ -411,7 +411,7 @@ def evaluate_chronological_model(all_data):
 
     #Group test matches by date
     test_df = pd.DataFrame(test_records)
-    test_df["eval_date"] = pd.to_datetime(test_df["date"])
+    test_df["eval_date"] = pd.to_datetime(test_df["date"]).dt.normalize()
 
     for date, day_matches in test_df.groupby("eval_date", sort=True):
 
