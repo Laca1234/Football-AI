@@ -82,10 +82,6 @@ def predict_match(home: str, away: str, rf, target_encoder,
     # Smooth toward uniform to prevent overconfident splits
     proba = proba * 0.88 + 0.12 / 3
 
-    if noise:
-        proba += np.random.normal(0, NOISE_STD, size=len(proba))
-        proba  = np.clip(proba, 0.01, None)
-
     proba /= proba.sum()
     return dict(zip(target_encoder.classes_, proba.tolist()))
 

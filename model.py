@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, log_loss, classification_report
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 pd.options.mode.chained_assignment = None
@@ -141,12 +142,13 @@ def _parse_events(events, season):
         hg = e.get("intHomeScore")
         ag = e.get("intAwayScore")
         if hg is None or ag is None:
-            continue
-        try:
-            hg, ag = int(hg), int(ag)
-        except (ValueError, TypeError):
-            continue
-        ftr = "H" if hg > ag else ("A" if ag > hg else "D")
+            hg_val, ag_val, ftr = None, None, None
+        else:
+            try:
+                hg_val, ag_val = int(hg), int(ag)
+                ftr = "H" if hg_val > ag_val else ("A" if ag_val > hg_val else "D")
+            except (ValueError, TypeError):
+                hg_val, ag_val, ftr = None, None, None
         
         home_team = _normalise_team(e.get("strHomeTeam", ""))
         away_team = _normalise_team(e.get("strAwayTeam", ""))
@@ -154,8 +156,8 @@ def _parse_events(events, season):
         rows.append({
             "HomeTeam": home_team,
             "AwayTeam": away_team,
-            "FTHG":     hg,
-            "FTAG":     ag,
+            "FTHG":     hg_val,
+            "FTAG":     ag_val,
             "FTR":      ftr,
             "season":   season,
             "date":     e.get("dateEvent", ""),
@@ -299,9 +301,10 @@ FEATURE_COLS = [
 
 def train_model(data: pd.DataFrame, verbose=True):
     if verbose:
-        print(f"  Building features for {len(data):,} matches...")
+        print(f"  Building features for completed matches...")
 
-    feat_df, team_history = _build_features(data)
+    completed_data = data.dropna(subset=["FTR"]).reset_index(drop=True)
+    feat_df, team_history = _build_features(completed_data)
 
     label_encoders = {}
     for col in ["home_team", "away_team"]:
@@ -322,11 +325,6 @@ def train_model(data: pd.DataFrame, verbose=True):
     if verbose:
         print(f"  Training model on {len(wX):,} weighted samples...")
 
-    # GradientBoosting handles the relatively small feature set better than
-    # a deep Random Forest — less prone to outputting flat 33/33/33 probabilities
-    from sklearn.ensemble import GradientBoostingClassifier
-    from sklearn.multiclass import OneVsRestClassifier
-
     from sklearn.ensemble import RandomForestClassifier
     rf = RandomForestClassifier(
         n_estimators=600,
@@ -344,3 +342,86 @@ def train_model(data: pd.DataFrame, verbose=True):
         print(f"  Done. {len(label_encoders['home_team'].classes_)} unique teams.\n")
 
     return rf, target_encoder, label_encoders, team_history, FEATURE_COLS
+
+def evaluate_chronological_model(all_data):
+    """
+    Performs a strict chronological train/test evaluation.
+    Training: Seasons up to 2022-2023
+    Testing: Seasons 2023-2024 through 2024-2025
+    """
+    train_seasons = [
+        "2012-2013", "2013-2014", "2014-2015", "2015-2016",
+        "2016-2017", "2017-2018", "2018-2019", "2019-2020",
+        "2020-2021", "2021-2022", "2022-2023"
+    ]
+    test_seasons = ["2023-2024", "2024-2025"]
+
+    records = all_data.to_dict("records")
+    train_records = [r for r in records if r.get("season") in train_seasons]
+    test_records = [r for r in records if r.get("season") in test_seasons]
+
+    if not train_records or not test_records:
+        print("Warning: Training or testing set is empty based on specified seasons.")
+        return
+
+    print(f"Training on {len(train_records)} matches across seasons {train_seasons[0]} to {train_seasons[-1]}...")
+    rf, target_enc, label_enc, team_hist, feat_cols = train_model(pd.DataFrame(train_records))
+
+    print(f"Evaluating on {len(test_records)} matches across test seasons...")
+    
+    X_test, y_test = [], []
+    eval_history = {k: list(v) for k, v in team_hist.items()}
+
+    for match in test_records:
+        home = match.get("HomeTeam")
+        away = match.get("AwayTeam")
+        ftr = match.get("FTR")
+        season = match.get("season")
+
+        if not home or not away or not ftr:
+            continue
+
+        from service import _get_features
+        features_df = _get_features(home, away, eval_history, season)
+        
+        if features_df.empty:
+            continue
+
+        X_test.append(features_df.iloc[0].values)
+        y_test.append(ftr)
+
+        # Sequentially update history to prevent data leakage
+        is_home_win = (ftr == "H")
+        is_draw = (ftr == "D")
+        hg = match.get("FTHG", 0)
+        ag = match.get("FTAG", 0)
+        
+        if home in eval_history:
+            eval_history[home].append(dict(is_home=True, gf=hg, ga=ag, win=is_home_win, draw=is_draw, season=season, date=match.get("date", "sim")))
+        if away in eval_history:
+            eval_history[away].append(dict(is_home=False, gf=ag, ga=hg, win=(ftr == "A"), draw=is_draw, season=season, date=match.get("date", "sim")))
+
+    if not X_test:
+        print("No valid test samples constructed.")
+        return
+
+    X_test_arr = np.array(X_test)
+    y_test_arr = target_enc.transform(y_test)
+
+    preds = rf.predict(X_test_arr)
+    probas = rf.predict_proba(X_test_arr)
+
+    acc = accuracy_score(y_test_arr, preds)
+    loss = log_loss(y_test_arr, probas)
+
+    # Multiclass Brier Score calculation
+    num_classes = len(target_enc.classes_)
+    y_test_onehot = np.eye(num_classes)[y_test_arr]
+    brier_score = np.mean(np.sum((probas - y_test_onehot) ** 2, axis=1))
+
+    print("\n=== Chronological Evaluation Results ===")
+    print(f"Test Accuracy: {acc:.4f}")
+    print(f"Test Log Loss: {loss:.4f}")
+    print(f"Multiclass Brier Score: {brier_score:.4f}")
+    print("\nClassification Report:")
+    print(classification_report(y_test_arr, preds, target_names=target_enc.classes_))

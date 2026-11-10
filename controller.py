@@ -128,7 +128,7 @@ def predict():
             continue
 
         probs = predict_match(home, away, _rf, _target_enc, _label_enc,
-                            _team_hist, CURRENT_SEASON, noise=True)
+                            _team_hist, CURRENT_SEASON)
         if probs is None:
             results.append({"home": home, "away": away, "error": "Unknown team(s)"})
             continue
