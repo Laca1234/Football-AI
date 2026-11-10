@@ -1,6 +1,4 @@
 # Python
-__pycache__/
-*.py[cod]
 *.pyd
 
 # Virtual environments
@@ -16,7 +14,7 @@ env/
 .env.*
 
 # Generated data
-_cache/
+
 
 # IDE and editor files
 .vscode/
